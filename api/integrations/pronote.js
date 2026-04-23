@@ -16,6 +16,15 @@ const normalizePronoteUrl = (value) => {
   return withoutEleveHtml.endsWith('/') ? withoutEleveHtml : `${withoutEleveHtml}/`
 }
 
+const safePronoteUrlForLogs = (value) => {
+  try {
+    const u = new URL(value)
+    return `${u.origin}${u.pathname}`
+  } catch {
+    return String(value || '')
+  }
+}
+
 const normalizeCas = (value) => {
   const raw = String(value || '').trim().toLowerCase()
   if (!raw) return undefined
@@ -146,6 +155,14 @@ module.exports = async (req, res) => {
     })
   } catch (error) {
     const msg = String(error?.message || '')
+    const safeUrl = safePronoteUrlForLogs(normalizedUrl)
+    console.warn('Pronote sync failed', {
+      code: error?.code || null,
+      name: error?.name || null,
+      message: msg || null,
+      url: safeUrl,
+      hasCas: Boolean(cas),
+    })
     if (/temporarily banned|too many failed authentication attempts/i.test(msg)) {
       pronoteCooldowns.set(cooldownKey, Date.now() + PRONOTE_COOLDOWN_MS)
       res.setHeader('Retry-After', String(Math.ceil(PRONOTE_COOLDOWN_MS / 1000)))
