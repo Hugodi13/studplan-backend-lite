@@ -28,6 +28,11 @@ app.use((err, _req, res, _next) => {
 })
 
 process.on('unhandledRejection', (reason) => {
+  const msg = String(reason?.message || '')
+  if (reason?.code === 'ECONNRESET' || /ECONNRESET|socket hang up/i.test(msg)) {
+    console.warn('Network reset from remote school API (handled)')
+    return
+  }
   console.error('Unhandled rejection:', reason)
 })
 
