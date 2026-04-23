@@ -101,6 +101,7 @@ module.exports = async (req, res) => {
   const remainingMs = getRemainingCooldownMs(cooldownKey)
   if (remainingMs > 0) {
     const waitMin = Math.max(1, Math.ceil(remainingMs / 60000))
+    res.setHeader('Retry-After', String(Math.ceil(remainingMs / 1000)))
     return res.status(429).json({
       error: 'Pronote a temporairement bloqué les tentatives depuis ce backend.',
       details: `Réessaie dans environ ${waitMin} min pour éviter un nouveau blocage.`,
@@ -147,6 +148,7 @@ module.exports = async (req, res) => {
     const msg = String(error?.message || '')
     if (/temporarily banned|too many failed authentication attempts/i.test(msg)) {
       pronoteCooldowns.set(cooldownKey, Date.now() + PRONOTE_COOLDOWN_MS)
+      res.setHeader('Retry-After', String(Math.ceil(PRONOTE_COOLDOWN_MS / 1000)))
       return res.status(429).json({
         error: 'Pronote bloque temporairement cette connexion (trop de tentatives).',
         details: 'Patiente 15 minutes puis réessaie avec les bons identifiants.',

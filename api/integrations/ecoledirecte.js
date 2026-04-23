@@ -22,6 +22,29 @@ const withTimeout = async (promise, timeoutMs, label) => {
   }
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const isTransientNetworkError = (error) => {
+  const msg = String(error?.message || '')
+  return (
+    error?.code === 'ETIMEDOUT' ||
+    error?.code === 'ECONNRESET' ||
+    error?.code === 'EAI_AGAIN' ||
+    /ETIMEDOUT|ECONNRESET|EAI_AGAIN|timeout|timed out|socket hang up/i.test(msg)
+  )
+}
+
+const pickHomeworkTarget = (connected) => {
+  const account = Array.isArray(connected) ? connected[0] : connected
+  if (!account) return null
+  if (typeof account.fetchCahierDeTexte === 'function') return account
+  if (Array.isArray(account?.eleves) && account.eleves.length) {
+    const firstStudent = account.eleves.find((s) => typeof s?.fetchCahierDeTexte === 'function')
+    if (firstStudent) return firstStudent
+  }
+  return null
+}
+
 const toIsoDate = (value) => {
   if (!value) return undefined
   const date = value instanceof Date ? value : new Date(value)
@@ -49,34 +72,39 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const session = new EcoleDirecte.Session()
-    const connected = await withTimeout(
-      session.connexion(String(username).trim(), String(password)),
-      30000,
-      'EcoleDirecte login',
-    )
+    const maxAttempts = 2
+    let homework = null
+    let lastError = null
 
-    // node-ecole-directe can return either a single account-like object
-    // or a list depending on account type/version.
-    const account = Array.isArray(connected)
-      ? connected[0]
-      : connected
-
-    const target =
-      account && typeof account.fetchCahierDeTexte === 'function'
-        ? account
-        : Array.isArray(account?.eleves) && account.eleves.length
-          ? account.eleves[0]
-          : null
-
-    if (!target || typeof target.fetchCahierDeTexte !== 'function') {
-      return res.status(500).json({
-        error: 'Connexion École Directe impossible.',
-        details: 'Format de compte non reconnu par le connecteur.',
-      })
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const session = new EcoleDirecte.Session()
+        const connected = await withTimeout(
+          session.connexion(String(username).trim(), String(password)),
+          30000,
+          'EcoleDirecte login',
+        )
+        const target = pickHomeworkTarget(connected)
+        if (!target || typeof target.fetchCahierDeTexte !== 'function') {
+          return res.status(500).json({
+            error: 'Connexion École Directe impossible.',
+            details: 'Format de compte non reconnu par le connecteur.',
+          })
+        }
+        homework = await withTimeout(target.fetchCahierDeTexte(), 30000, 'EcoleDirecte homeworks')
+        lastError = null
+        break
+      } catch (err) {
+        lastError = err
+        if (attempt < maxAttempts && isTransientNetworkError(err)) {
+          await sleep(1200)
+          continue
+        }
+        break
+      }
     }
 
-    const homework = await withTimeout(target.fetchCahierDeTexte(), 30000, 'EcoleDirecte homeworks')
+    if (lastError) throw lastError
 
     const flattened = Array.isArray(homework)
       ? homework
