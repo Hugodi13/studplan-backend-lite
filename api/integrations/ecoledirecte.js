@@ -72,7 +72,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const maxAttempts = 2
+    const maxAttempts = 4
     let homework = null
     let lastError = null
 
@@ -97,7 +97,8 @@ module.exports = async (req, res) => {
       } catch (err) {
         lastError = err
         if (attempt < maxAttempts && isTransientNetworkError(err)) {
-          await sleep(1200)
+          const delay = 900 * attempt + Math.floor(Math.random() * 400)
+          await sleep(delay)
           continue
         }
         break
@@ -121,6 +122,12 @@ module.exports = async (req, res) => {
     const msg = String(error?.message || '')
     if (/credential|identifiant|mot de passe|login|invalid/i.test(msg)) {
       return res.status(401).json({ error: 'Identifiants École Directe invalides.' })
+    }
+    if (error?.code === 'ECONNRESET' || /ECONNRESET|socket hang up|network reset/i.test(msg)) {
+      return res.status(503).json({
+        error: 'Connexion École Directe réinitialisée par le serveur distant.',
+        details: 'Le service École Directe coupe la connexion. Réessaie dans quelques minutes.',
+      })
     }
     if (error?.code === 'ETIMEDOUT' || /ETIMEDOUT|timeout|timed out|délai/i.test(msg)) {
       return res.status(504).json({
