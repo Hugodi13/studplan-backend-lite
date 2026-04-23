@@ -1,4 +1,6 @@
 const EcoleDirecte = require('node-ecole-directe')
+const edCooldowns = new Map()
+const ED_NETWORK_COOLDOWN_MS = 8 * 60 * 1000
 
 const setCors = (res) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -45,6 +47,28 @@ const pickHomeworkTarget = (connected) => {
   return null
 }
 
+const getClientIp = (req) => {
+  const forwarded = req.headers?.['x-forwarded-for']
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim()
+  }
+  return req.ip || req.socket?.remoteAddress || 'unknown'
+}
+
+const getCooldownKey = (req, username) =>
+  [getClientIp(req), String(username || '').trim().toLowerCase()].join('|')
+
+const getRemainingCooldownMs = (key) => {
+  const until = edCooldowns.get(key)
+  if (!until) return 0
+  const remaining = until - Date.now()
+  if (remaining <= 0) {
+    edCooldowns.delete(key)
+    return 0
+  }
+  return remaining
+}
+
 const toIsoDate = (value) => {
   if (!value) return undefined
   const date = value instanceof Date ? value : new Date(value)
@@ -69,6 +93,16 @@ module.exports = async (req, res) => {
   const { username, password } = req.body || {}
   if (!username || !password) {
     return res.status(400).json({ error: 'Missing Ecole Directe credentials' })
+  }
+  const cooldownKey = getCooldownKey(req, username)
+  const remainingMs = getRemainingCooldownMs(cooldownKey)
+  if (remainingMs > 0) {
+    const waitMin = Math.max(1, Math.ceil(remainingMs / 60000))
+    res.setHeader('Retry-After', String(Math.ceil(remainingMs / 1000)))
+    return res.status(429).json({
+      error: 'École Directe est temporairement indisponible depuis ce backend.',
+      details: `Réessaie dans environ ${waitMin} min pour éviter les boucles réseau.`,
+    })
   }
 
   try {
@@ -124,12 +158,16 @@ module.exports = async (req, res) => {
       return res.status(401).json({ error: 'Identifiants École Directe invalides.' })
     }
     if (error?.code === 'ECONNRESET' || /ECONNRESET|socket hang up|network reset/i.test(msg)) {
+      edCooldowns.set(cooldownKey, Date.now() + ED_NETWORK_COOLDOWN_MS)
+      res.setHeader('Retry-After', String(Math.ceil(ED_NETWORK_COOLDOWN_MS / 1000)))
       return res.status(503).json({
         error: 'Connexion École Directe réinitialisée par le serveur distant.',
         details: 'Le service École Directe coupe la connexion. Réessaie dans quelques minutes.',
       })
     }
     if (error?.code === 'ETIMEDOUT' || /ETIMEDOUT|timeout|timed out|délai/i.test(msg)) {
+      edCooldowns.set(cooldownKey, Date.now() + ED_NETWORK_COOLDOWN_MS)
+      res.setHeader('Retry-After', String(Math.ceil(ED_NETWORK_COOLDOWN_MS / 1000)))
       return res.status(504).json({
         error: 'Serveur École Directe non joignable depuis le backend.',
         details:

@@ -1,6 +1,7 @@
 const pronote = require('pronote-api-maintained')
 const pronoteCooldowns = new Map()
 const PRONOTE_COOLDOWN_MS = 15 * 60 * 1000
+const PRONOTE_NETWORK_COOLDOWN_MS = 8 * 60 * 1000
 
 const setCors = (res) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -176,6 +177,8 @@ module.exports = async (req, res) => {
       return res.status(401).json({ error: 'Identifiants Pronote invalides.' })
     }
     if (error?.code === 'ETIMEDOUT' || /ETIMEDOUT|timeout|timed out/i.test(msg)) {
+      pronoteCooldowns.set(cooldownKey, Date.now() + PRONOTE_NETWORK_COOLDOWN_MS)
+      res.setHeader('Retry-After', String(Math.ceil(PRONOTE_NETWORK_COOLDOWN_MS / 1000)))
       return res.status(504).json({
         error: 'Serveur Pronote non joignable depuis le backend.',
         details:
