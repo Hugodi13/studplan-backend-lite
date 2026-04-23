@@ -1,0 +1,15 @@
+{
+  "name": "studyplan-backend-lite",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "node-ecole-directe": "^1.3.4",
+    "pronote-api-maintained": "^3.1.0",
+    "pronote-lib": "^2.1.6"
+  }
+}
