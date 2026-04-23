@@ -6,6 +6,22 @@ const setCors = (res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
 }
 
+const withTimeout = async (promise, timeoutMs, label) => {
+  let timeoutId
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(`${label} timed out`)
+      err.code = 'ETIMEDOUT'
+      reject(err)
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 const toIsoDate = (value) => {
   if (!value) return undefined
   const date = value instanceof Date ? value : new Date(value)
@@ -34,7 +50,11 @@ module.exports = async (req, res) => {
 
   try {
     const session = new EcoleDirecte.Session()
-    const connected = await session.connexion(String(username).trim(), String(password))
+    const connected = await withTimeout(
+      session.connexion(String(username).trim(), String(password)),
+      30000,
+      'EcoleDirecte login',
+    )
 
     // node-ecole-directe can return either a single account-like object
     // or a list depending on account type/version.
@@ -56,7 +76,7 @@ module.exports = async (req, res) => {
       })
     }
 
-    const homework = await target.fetchCahierDeTexte()
+    const homework = await withTimeout(target.fetchCahierDeTexte(), 30000, 'EcoleDirecte homeworks')
 
     const flattened = Array.isArray(homework)
       ? homework

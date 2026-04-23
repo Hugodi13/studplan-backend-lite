@@ -1,4 +1,6 @@
 const pronote = require('pronote-api-maintained')
+const pronoteCooldowns = new Map()
+const PRONOTE_COOLDOWN_MS = 15 * 60 * 1000
 
 const setCors = (res) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -38,6 +40,28 @@ const withTimeout = async (promise, timeoutMs, label) => {
   }
 }
 
+const getClientIp = (req) => {
+  const forwarded = req.headers?.['x-forwarded-for']
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim()
+  }
+  return req.ip || req.socket?.remoteAddress || 'unknown'
+}
+
+const getCooldownKey = (req, normalizedUrl, username) =>
+  [getClientIp(req), normalizedUrl, String(username || '').trim().toLowerCase()].join('|')
+
+const getRemainingCooldownMs = (key) => {
+  const until = pronoteCooldowns.get(key)
+  if (!until) return 0
+  const remaining = until - Date.now()
+  if (remaining <= 0) {
+    pronoteCooldowns.delete(key)
+    return 0
+  }
+  return remaining
+}
+
 const toIsoDate = (value) => {
   if (!value) return undefined
   const date = value instanceof Date ? value : new Date(value)
@@ -72,8 +96,18 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'Missing pronote credentials' })
   }
 
+  const normalizedUrl = normalizePronoteUrl(url)
+  const cooldownKey = getCooldownKey(req, normalizedUrl, username)
+  const remainingMs = getRemainingCooldownMs(cooldownKey)
+  if (remainingMs > 0) {
+    const waitMin = Math.max(1, Math.ceil(remainingMs / 60000))
+    return res.status(429).json({
+      error: 'Pronote a temporairement bloqué les tentatives depuis ce backend.',
+      details: `Réessaie dans environ ${waitMin} min pour éviter un nouveau blocage.`,
+    })
+  }
+
   try {
-    const normalizedUrl = normalizePronoteUrl(url)
     const normalizedCas = normalizeCas(cas)
     const casCandidates = normalizedCas
       ? [normalizedCas]
@@ -111,6 +145,13 @@ module.exports = async (req, res) => {
     })
   } catch (error) {
     const msg = String(error?.message || '')
+    if (/temporarily banned|too many failed authentication attempts/i.test(msg)) {
+      pronoteCooldowns.set(cooldownKey, Date.now() + PRONOTE_COOLDOWN_MS)
+      return res.status(429).json({
+        error: 'Pronote bloque temporairement cette connexion (trop de tentatives).',
+        details: 'Patiente 15 minutes puis réessaie avec les bons identifiants.',
+      })
+    }
     const wrongCredentialsCode = pronote?.errors?.WRONG_CREDENTIALS?.code
     if (error?.code === wrongCredentialsCode || /credential|identifiant|mot de passe|login/i.test(msg)) {
       return res.status(401).json({ error: 'Identifiants Pronote invalides.' })
