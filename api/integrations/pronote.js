@@ -77,7 +77,7 @@ module.exports = async (req, res) => {
     const normalizedCas = normalizeCas(cas)
     const casCandidates = normalizedCas
       ? [normalizedCas]
-      : [undefined, 'atrium-sud', 'ac-aix-marseille', 'ent']
+      : [undefined, 'atrium-sud', 'none']
 
     let lastError = null
     let tasks = []
