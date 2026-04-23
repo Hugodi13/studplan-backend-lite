@@ -34,8 +34,29 @@ module.exports = async (req, res) => {
 
   try {
     const session = new EcoleDirecte.Session()
-    const account = await session.connexion(String(username).trim(), String(password))
-    const homework = await account.fetchCahierDeTexte()
+    const connected = await session.connexion(String(username).trim(), String(password))
+
+    // node-ecole-directe can return either a single account-like object
+    // or a list depending on account type/version.
+    const account = Array.isArray(connected)
+      ? connected[0]
+      : connected
+
+    const target =
+      account && typeof account.fetchCahierDeTexte === 'function'
+        ? account
+        : Array.isArray(account?.eleves) && account.eleves.length
+          ? account.eleves[0]
+          : null
+
+    if (!target || typeof target.fetchCahierDeTexte !== 'function') {
+      return res.status(500).json({
+        error: 'Connexion École Directe impossible.',
+        details: 'Format de compte non reconnu par le connecteur.',
+      })
+    }
+
+    const homework = await target.fetchCahierDeTexte()
 
     const flattened = Array.isArray(homework)
       ? homework
