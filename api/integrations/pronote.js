@@ -22,6 +22,22 @@ const normalizeCas = (value) => {
   return raw
 }
 
+const withTimeout = async (promise, timeoutMs, label) => {
+  let timeoutId
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(`${label} timed out`)
+      err.code = 'ETIMEDOUT'
+      reject(err)
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 const toIsoDate = (value) => {
   if (!value) return undefined
   const date = value instanceof Date ? value : new Date(value)
@@ -59,14 +75,34 @@ module.exports = async (req, res) => {
   try {
     const normalizedUrl = normalizePronoteUrl(url)
     const normalizedCas = normalizeCas(cas)
-    const session = await pronote.login(
-      normalizedUrl,
-      String(username).trim(),
-      String(password),
-      normalizedCas,
-    )
-    const homeworks = await session.homeworks()
-    const tasks = Array.isArray(homeworks) ? homeworks.map(toTask).filter((t) => t.title) : []
+    const casCandidates = normalizedCas
+      ? [normalizedCas]
+      : [undefined, 'atrium-sud', 'ac-aix-marseille', 'ent']
+
+    let lastError = null
+    let tasks = []
+    for (const casTry of casCandidates) {
+      try {
+        const session = await withTimeout(
+          pronote.login(
+            normalizedUrl,
+            String(username).trim(),
+            String(password),
+            casTry,
+          ),
+          30000,
+          'Pronote login',
+        )
+        const homeworks = await withTimeout(session.homeworks(), 30000, 'Pronote homeworks')
+        tasks = Array.isArray(homeworks) ? homeworks.map(toTask).filter((t) => t.title) : []
+        lastError = null
+        break
+      } catch (attemptError) {
+        lastError = attemptError
+      }
+    }
+
+    if (lastError) throw lastError
 
     return res.status(200).json({
       mock: false,
